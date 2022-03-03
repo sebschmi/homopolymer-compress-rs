@@ -2,6 +2,7 @@
 name = "homopolymer-compress"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.58.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,3 +12,8 @@ name = "homopolymer-compress"
 [lib]
 
 [dependencies]
+log = "0.4.14"
+simplelog = "0.11.2"
+bio = "0.40.0"
+clap = {version = "3.1.5", features = ["derive"]}
+crossbeam = "0.8.1"
