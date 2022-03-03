@@ -1,7 +1,7 @@
 [package]
 name = "homopolymer-compress"
 description = "Homopolymer compression of arbitrary sequences."
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "BSD-2-Clause"
 repository = "https://github.com/sebschmi/homopolymer-compress-rs"
