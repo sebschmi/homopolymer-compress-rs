@@ -1,2 +1,2 @@
-# homopolymer-compress-rs
+# Homopolymer Compressor
 Homopolymer compression of genomic data.
