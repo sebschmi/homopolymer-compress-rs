@@ -20,3 +20,5 @@ simplelog = "0.11.2"
 bio = "0.40.0"
 clap = {version = "3.1.5", features = ["derive"]}
 crossbeam = "0.8.1"
+serde = "1.0.137"
+cbor = "0.4.1"

@@ -1,7 +1,8 @@
 use bio::io::fasta;
+use cbor::Encoder;
 use clap::Parser;
 use crossbeam::{channel, thread};
-use homopolymer_compress::homopolymer_compress;
+use homopolymer_compress::{homopolymer_compress, homopolymer_compress_with_hodeco_map};
 use log::{info, LevelFilter};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use std::fs::File;
@@ -16,6 +17,10 @@ struct Configuration {
     /// The output file. If not given, outputting to stdout.
     #[clap(index = 2, parse(from_os_str))]
     output: Option<PathBuf>,
+
+    /// The file to output the map used to homopolymer decompress the output.
+    #[clap(index = 3, parse(from_os_str))]
+    hodeco_map_output: Option<PathBuf>,
 
     /// The number of compute threads to use for compressing.
     /// The program uses two extra threads for reading and writing the input and output files, which are not part of this number.
@@ -71,7 +76,10 @@ fn main() {
             .unwrap_or_else(|error| panic!("Cannot spawn input thread: {error:?}"));
 
         let (output_sender, output_receiver) =
-            channel::bounded::<(String, Option<String>, Vec<u8>)>(configuration.buffer_size);
+            channel::bounded::<(String, Option<String>, (Vec<u8>, Option<Vec<usize>>))>(
+                configuration.buffer_size,
+            );
+        let hodeco_map_output = configuration.hodeco_map_output.clone();
         if let Some(output) = configuration.output {
             let output_file = File::create(&output)
                 .unwrap_or_else(|error| panic!("Cannot create output file: {error:?}"));
@@ -80,10 +88,25 @@ fn main() {
                 .name("output_thread".to_string())
                 .spawn(move |_| {
                     let mut writer = fasta::Writer::new(output_file);
-                    while let Ok((id, description, sequence)) = output_receiver.recv() {
+                    let mut hodeco_mapping_writer = hodeco_map_output.as_ref().map(|path| {
+                        Encoder::from_writer(File::create(path).unwrap_or_else(|error| {
+                            panic!("Cannot create hodeco mapping output file: {error:?}")
+                        }))
+                    });
+                    while let Ok((id, description, (sequence, hodeco_mapping))) =
+                        output_receiver.recv()
+                    {
                         writer
                             .write(&id, description.as_deref(), &sequence)
                             .unwrap_or_else(|error| panic!("Cannot write fasta record: {error:?}"));
+                        if let Some(hodeco_mapping_writer) = hodeco_mapping_writer.as_mut() {
+                            let hodeco_mapping = hodeco_mapping.unwrap_or_else(|| unreachable!());
+                            hodeco_mapping_writer
+                                .encode(hodeco_mapping)
+                                .unwrap_or_else(|error| {
+                                    panic!("Error writing hodeco mapping: {error:?}")
+                                });
+                        }
                     }
                 })
                 .unwrap_or_else(|error| panic!("Cannot spawn output thread: {error:?}"));
@@ -93,7 +116,13 @@ fn main() {
                 .name("output_thread".to_string())
                 .spawn(move |_| {
                     let mut writer = fasta::Writer::new(std::io::stdout());
-                    while let Ok((id, description, sequence)) = output_receiver.recv() {
+                    while let Ok((id, description, (sequence, hodeco_mapping))) =
+                        output_receiver.recv()
+                    {
+                        assert!(
+                            hodeco_mapping.is_none(),
+                            "Found hodeco mapping even though no output file was specified."
+                        );
                         writer
                             .write(&id, description.as_deref(), &sequence)
                             .unwrap_or_else(|error| panic!("Cannot write fasta record: {error:?}"));
@@ -105,20 +134,41 @@ fn main() {
         for thread_id in 0..configuration.threads {
             let input_receiver = input_receiver.clone();
             let output_sender = output_sender.clone();
+            let hodeco_map_output = configuration.hodeco_map_output.clone();
             scope
                 .builder()
                 .name(format!("compute_thread_{thread_id}"))
                 .spawn(move |_| {
-                    while let Ok(record) = input_receiver.recv() {
-                        let hoco_sequence: Vec<u8> =
-                            homopolymer_compress(record.seq().iter().cloned()).collect();
-                        output_sender
-                            .send((
-                                record.id().to_owned(),
-                                record.desc().map(str::to_owned),
-                                hoco_sequence,
-                            ))
-                            .unwrap_or_else(|error| panic!("Cannot send fasta record: {error:?}"));
+                    if hodeco_map_output.is_some() {
+                        while let Ok(record) = input_receiver.recv() {
+                            let (hoco_sequence, mut hodeco_mapping): (Vec<u8>, Vec<_>) =
+                                homopolymer_compress_with_hodeco_map(record.seq().iter().cloned())
+                                    .unzip();
+                            hodeco_mapping.push(record.seq().len());
+                            output_sender
+                                .send((
+                                    record.id().to_owned(),
+                                    record.desc().map(str::to_owned),
+                                    (hoco_sequence, Some(hodeco_mapping)),
+                                ))
+                                .unwrap_or_else(|error| {
+                                    panic!("Cannot send fasta record: {error:?}")
+                                });
+                        }
+                    } else {
+                        while let Ok(record) = input_receiver.recv() {
+                            let hoco_sequence: Vec<u8> =
+                                homopolymer_compress(record.seq().iter().cloned()).collect();
+                            output_sender
+                                .send((
+                                    record.id().to_owned(),
+                                    record.desc().map(str::to_owned),
+                                    (hoco_sequence, None),
+                                ))
+                                .unwrap_or_else(|error| {
+                                    panic!("Cannot send fasta record: {error:?}")
+                                });
+                        }
                     }
                 })
                 .unwrap_or_else(|error| panic!("Cannot spawn compute thread: {error:?}"));
