@@ -6,6 +6,7 @@ use homopolymer_compress::{homopolymer_compress, homopolymer_compress_with_hodec
 use log::{info, LevelFilter};
 use simplelog::{ColorChoice, TermLogger, TerminalMode};
 use std::fs::File;
+use std::iter;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -102,7 +103,7 @@ fn main() {
                         if let Some(hodeco_mapping_writer) = hodeco_mapping_writer.as_mut() {
                             let hodeco_mapping = hodeco_mapping.unwrap_or_else(|| unreachable!());
                             hodeco_mapping_writer
-                                .encode(hodeco_mapping)
+                                .encode(iter::once((id, hodeco_mapping)))
                                 .unwrap_or_else(|error| {
                                     panic!("Error writing hodeco mapping: {error:?}")
                                 });
